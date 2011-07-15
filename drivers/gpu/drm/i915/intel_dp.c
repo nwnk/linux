@@ -175,7 +175,6 @@ intel_dp_link_clock(uint8_t link_bw)
 		return 162000;
 }
 
-/* I think this is a fiction */
 static int
 intel_dp_link_required(struct drm_device *dev, struct intel_dp *intel_dp, int pixel_clock)
 {
@@ -716,9 +715,7 @@ intel_dp_set_m_n(struct drm_crtc *crtc, struct drm_display_mode *mode,
 	}
 
 	/*
-	 * Compute the GMCH and Link ratios. The '3' here is
-	 * the number of bytes_per_pixel post-LUT, which we always
-	 * set up for 8-bits of R/G/B, or 3 bytes total.
+	 * Compute the GMCH and Link ratios.
 	 */
 	intel_dp_compute_m_n(intel_crtc->bpp, lane_count,
 			     mode->clock, adjusted_mode->clock, &m_n);
