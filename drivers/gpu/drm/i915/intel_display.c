@@ -4583,6 +4583,7 @@ static inline bool intel_panel_use_ssc(struct drm_i915_private *dev_priv)
 /**
  * intel_choose_pipe_bpp_dither - figure out what color depth the pipe should send
  * @crtc: CRTC structure
+ * @mode: requested mode
  *
  * A pipe may be connected to one or more outputs.  Based on the depth of the
  * attached framebuffer, choose a good color depth to use on the pipe.
@@ -4594,13 +4595,15 @@ static inline bool intel_panel_use_ssc(struct drm_i915_private *dev_priv)
  *    HDMI supports only 8bpc or 12bpc, so clamp to 8bpc with dither for 10bpc
  *    Displays may support a restricted set as well, check EDID and clamp as
  *      appropriate.
+ *    DP may want to dither down to 6bpc to fit larger modes
  *
  * RETURNS:
  * Dithering requirement (i.e. false if display bpc and pipe bpc match,
  * true if they don't match).
  */
 static bool intel_choose_pipe_bpp_dither(struct drm_crtc *crtc,
-					 unsigned int *pipe_bpp)
+					 unsigned int *pipe_bpp,
+					 struct drm_display_mode *mode)
 {
 	struct drm_device *dev = crtc->dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
@@ -4670,6 +4673,9 @@ static bool intel_choose_pipe_bpp_dither(struct drm_crtc *crtc,
 			}
 		}
 	}
+
+	if (mode->private_flags & INTEL_MODE_DP_FORCE_6BPC)
+		display_bpc = 6;
 
 	/*
 	 * We could just drive the pipe at the highest bpc all the time and
@@ -4928,6 +4934,16 @@ static int i9xx_crtc_mode_set(struct drm_crtc *crtc,
 			pipeconf |= PIPECONF_DOUBLE_WIDE;
 		else
 			pipeconf &= ~PIPECONF_DOUBLE_WIDE;
+	}
+
+	/* default to 8bpc */
+	pipeconf &= ~(PIPECONF_BPP_MASK | PIPECONF_DITHER_EN);
+	if (is_dp) {
+		if (mode->private_flags & INTEL_MODE_DP_FORCE_6BPC) {
+			pipeconf |= PIPECONF_BPP_6 |
+				    PIPECONF_DITHER_EN |
+				    PIPECONF_DITHER_TYPE_ST1;
+		}
 	}
 
 	dpll |= DPLL_VCO_ENABLE;

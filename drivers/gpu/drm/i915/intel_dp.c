@@ -199,6 +199,8 @@ intel_dp_mode_valid(struct drm_connector *connector,
 		    struct drm_display_mode *mode)
 {
 	struct intel_dp *intel_dp = intel_attached_dp(connector);
+	struct drm_crtc *crtc = intel_dp->base.base.crtc;
+	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
 	struct drm_device *dev = connector->dev;
 	struct drm_i915_private *dev_priv = dev->dev_private;
 	int max_link_clock = intel_dp_link_clock(intel_dp_max_link_bw(intel_dp));
@@ -214,10 +216,30 @@ intel_dp_mode_valid(struct drm_connector *connector,
 
 	/* only refuse the mode on non eDP since we have seen some weird eDP panels
 	   which are outside spec tolerances but somehow work by magic */
-	if (!is_edp(intel_dp) &&
-	    (intel_dp_link_required(connector->dev, intel_dp, mode->clock)
-	     > intel_dp_max_data_rate(max_link_clock, max_lanes)))
-		return MODE_CLOCK_HIGH;
+	if (!is_edp(intel_dp)) {
+		int max_rate = intel_dp_max_data_rate(max_link_clock,
+						      max_lanes);
+		int mode_rate = intel_dp_link_required(connector->dev,
+						       intel_dp,
+						       mode_clock);
+
+		if (mode_rate > max_rate && intel_dp->crtc) {
+			/* see if we can make it fit in 6bpc */
+			int old_bpp = intel_dp->crtc->bpp;
+			intel_dp->crtc->bpp = 18;
+			mode_rate = intel_dp_link_required(connector->dev,
+							   intel_dp,
+							   mode_clock);
+			intel_dp->crtc->bpp = old_bpp;
+
+			if (mode_rate > max_rate)
+				return MODE_CLOCK_HIGH;
+			else
+				mode->private_flags |= INTEL_MODE_DP_FORCE_6BPC;
+		} else {
+			return MODE_CLOCK_HIGH;
+		}
+	}
 
 	if (mode->clock < 10000)
 		return MODE_CLOCK_LOW;
