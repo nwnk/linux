@@ -254,4 +254,6 @@ struct drm_connector *drm_select_eld(struct drm_encoder *encoder,
 				     struct drm_display_mode *mode);
 int drm_load_edid_firmware(struct drm_connector *connector);
 
+void drm_edid_get_vendor(struct edid *edid, char vendor[4]);
+
 #endif /* __DRM_EDID_H__ */

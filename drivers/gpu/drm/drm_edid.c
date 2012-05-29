@@ -402,23 +402,21 @@ EXPORT_SYMBOL(drm_get_edid);
 /*** EDID parsing ***/
 
 /**
- * edid_vendor - match a string against EDID's obfuscated vendor field
+ * drm_edid_get_vendor - Extract the vendor ID from an EDID block
  * @edid: EDID to match
  * @vendor: vendor string
  *
- * Returns true if @vendor is in @edid, false otherwise
+ * Returns the PNP ID of the monitor vendor in @vendor.
  */
-static bool edid_vendor(struct edid *edid, char *vendor)
+void drm_edid_get_vendor(struct edid *edid, char vendor[4])
 {
-	char edid_vendor[3];
-
-	edid_vendor[0] = ((edid->mfg_id[0] & 0x7c) >> 2) + '@';
-	edid_vendor[1] = (((edid->mfg_id[0] & 0x3) << 3) |
-			  ((edid->mfg_id[1] & 0xe0) >> 5)) + '@';
-	edid_vendor[2] = (edid->mfg_id[1] & 0x1f) + '@';
-
-	return !strncmp(edid_vendor, vendor, 3);
+	vendor[0] = ((edid->mfg_id[0] & 0x7c) >> 2) + '@';
+	vendor[1] = (((edid->mfg_id[0] & 0x3) << 3) |
+		     ((edid->mfg_id[1] & 0xe0) >> 5)) + '@';
+	vendor[2] = (edid->mfg_id[1] & 0x1f) + '@';
+	vendor[4] = '\0';
 }
+EXPORT_SYMBOL(drm_edid_get_vendor);
 
 /**
  * edid_get_quirks - return quirk flags for a given EDID
@@ -432,9 +430,12 @@ static u32 edid_get_quirks(struct edid *edid)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(edid_quirk_list); i++) {
+		char vendor[4];
 		quirk = &edid_quirk_list[i];
 
-		if (edid_vendor(edid, quirk->vendor) &&
+		drm_edid_get_vendor(edid, vendor);
+
+		if (!strcmp(vendor, quirk->vendor) &&
 		    (EDID_PRODUCT_ID(edid) == quirk->product_id))
 			return quirk->quirks;
 	}
