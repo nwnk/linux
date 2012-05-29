@@ -27,6 +27,7 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/export.h>
+#include <linux/ctype.h>
 #include "drmP.h"
 #include "drm_ddcci.h"
 #include "drm_vcp.h"
@@ -290,6 +291,91 @@ ddcci_get_timing_report(struct i2c_adapter *i2c,
 	return true;
 }
 
+/* property glue */
+
+/* DRM_MODE_PROP_IMMUTABLE */
+
+/*
+ * Things that probably want special handling, or hiding:
+ * VCP_SATURATION_* and VCP_HUE_* for 6-axis control
+ * VCP_WINDOW_*
+ * VCP_*_FREQUENCY
+ * VCP_DISPLAY_FIRMWARE
+ */
+
+#define IMMUTABLE DRM_MODE_PROP_IMMUTABLE
+
+struct vcp_info {
+	u8 vcp;
+	int flags;
+	const char *name;
+} vcp_info[] = {
+	{ VCP_BACKLIGHT, 0, "Backlight" },
+	{ VCP_BLACK_LEVEL_BLUE, 0, "Black level (blue)" },
+	{ VCP_BLACK_LEVEL_GREEN, 0, "Black level (green)" },
+	{ VCP_BLACK_LEVEL_RED, 0, "Black level (red)" },
+	{ VCP_CLOCK, 0, "Clock" },
+	{ VCP_CLOCK_PHASE, 0, "Clock phase" },
+	{ VCP_CONTRAST, 0, "Contrast" },
+	{ VCP_DISPLAY_USAGE_TIME, IMMUTABLE, "Display usage time (hours)" },
+	{ VCP_FOCUS, 0, "Focus" },
+	{ VCP_HORIZONTAL_MOIRE, 0, "Horizontal moire" },
+	{ VCP_HUE, 0, "Hue" },
+	{ VCP_LUMINANCE, 0, "Luminance" },
+	{ VCP_SATURATION, 0, "Saturation" },
+	{ VCP_SHARPNESS, 0, "Sharpness" },
+	{ VCP_TV_BLACK_LEVEL, 0, "TV Black level" },
+	{ VCP_TV_CONTRAST, 0, "TV Contrast" },
+	{ VCP_TV_SHARPNESS, 0, "TV Sharpness" },
+	{ VCP_VELOCITY_MODULATION, 0, "Velocity modulation" },
+	{ VCP_VERTICAL_MOIRE, 0, "Vertical moire" },
+	{ VCP_VIDEO_GAIN_BLUE, 0, "Video gain (blue)" },
+	{ VCP_VIDEO_GAIN_GREEN, 0, "Video gain (green)" },
+	{ VCP_VIDEO_GAIN_RED, 0, "Video gain (red)" },
+	{ VCP_VISION_COMPENSATION, 0, "Vision compensation" },
+	{ VCP_ZOOM, 0, "Zoom" },
+};
+
+static bool
+ddcci_vcp_is_table(u8 vcp)
+{
+	switch (vcp) {
+	case VCP_INPUT_SOURCE:
+	case VCP_LUT_SIZE:
+	case VCP_SINGLE_POINT_LUT:
+	case VCP_BLOCK_LUT:
+	case VCP_RPC:
+	case VCP_EDID:
+	case VCP_WINDOW_CONTROL:
+	case VCP_SOURCE_TIMING_MODE:
+	case VCP_DISPLAY_DESCRIPTOR:
+	case VCP_AUX_DISPLAY_DATA:
+	case VCP_OUTPUT_SELECT:
+	case VCP_ASSET_TAG:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static struct vcp_info *
+ddcci_get_vcp_info(u8 vcp)
+{
+	int i;
+
+	if (vcp >= 0xe0)
+		return NULL; /* no vendor-specific vcp yet */
+
+	if (ddcci_vcp_is_table(vcp))
+		return NULL; /* no table r/w support yet */
+
+	for (i = 0; i < ARRAY_SIZE(vcp_info); i++)
+		if (vcp_info[i].vcp == vcp)
+			return &vcp_info[i];
+
+	return NULL;
+}
+
 /* High-level API */
 
 struct ddcci_context {
@@ -300,15 +386,76 @@ struct ddcci_context {
 	/* quirks, etc. */
 };
 
+/* works a byte at a time, since spaces are optional */
+static u8
+ddcci_strtou8(const char *in)
+{
+	u8 buf[3] = { *in, *(in + 1), 0 };
+
+	return simple_strtoul(buf, NULL, 16);
+}
+
+static void
+ddcci_make_property(struct ddcci_context *ctx, u8 vcp)
+{
+	struct vcp_info *v;
+	struct ddcci_feature f;
+	struct drm_property *prop;
+
+	if (!(v = ddcci_get_vcp_info(vcp)))
+		return;
+
+	if (!ddcci_get_vcp_feature(ctx->i2c, vcp, &f))
+		return;
+
+	if (!(prop = drm_property_create_range(ctx->dev, v->flags, v->name,
+					       0, f.max_value)))
+		return;
+
+	ctx->vcp[vcp] = prop->base.id;
+}
+
+static u8 *
+ddcci_parse_enum(struct ddcci_context *ctx, u8 *i)
+{
+	/* we don't handle these yet */
+	char *closeparen = strchr(i, ')');
+
+	return closeparen ? closeparen + 1 : NULL;
+}
+
 static bool
 ddcci_parse_caps(struct ddcci_context *ctx, struct edid *edid)
 {
 	bool ret = false;
-	u8 *caps = NULL;
+	u8 *caps = NULL, *i = NULL;
+	int vcp = -1, len;
 
 	caps = ddcci_get_vcp_capabilities(ctx->i2c);
 	if (!caps)
 		goto out;
+	len = strlen(caps);
+
+	/* not an elegant parser */
+	if (!(i = strstr(caps, "vcp(")))
+		goto out;
+
+	for (i += 4; i && *i && (i < caps + len); i++) {
+		if (isspace(*i))
+			continue;
+
+		if (!(isxdigit(*i) && isxdigit(*(i+1))))
+			break; /* we must be done */
+
+		vcp = ddcci_strtou8(i);
+
+		if (*(i+2) == '(') {
+			i = ddcci_parse_enum(ctx, i);
+		} else {
+			ddcci_make_property(ctx, vcp);
+			i += 2;
+		}
+	}
 
 out:
 	kfree(caps);
