@@ -1,0 +1,47 @@
+Display controller VCP can allow quirks
+Display type VCP allows CRT/LCD distinction (oh my)
+Color calibration controls should be exposed
+
+Not sure at all about sync algorithm.  MCCS sync loop suggestion seems like
+a 3.0-ism?  Definitely doesn't work like that on the dreamcolor.
+
+ookala raises an interesting point about OSD lockout.  maybe set is:
+- lock out OSD
+- read current val
+- compare to cached and throw -EAGAIN if different?
+- write new val
+- enable OSD
+
+Spec is unclear on what enabled and disabled means though.  Does it mean
+"visible" or "could be summoned"?  And does that vary by controller?  Oi.
+
+ddccontrol-db observations:
+- 59 of 139 files include VCP_DISPLAY_CONTROLLER
+- 14 of those bother to note what it was (and only two phy vendors among)
+- looks like same 14 also give firmware level, hmm
+- Does look like there's significant patterns to be found
+- VCP string parser needs to be robust against multiple vcp() brackets
+- 61 files include VCP_DISPLAY_FIRMWARE
+- 14 record the firmware level
+- 55 have e0-ff (vendor-specific) controls, christ
+
+Eventual patch order:
+* VCP
+* External prep changes
+* Low level API (minus VCP stuff)
+  * Probe and create context
+  * Timing report
+  - VCP fetch and basic parse
+- Scalar get/set
+  - Sink power state
+  - Display type?
+  - Generic RANDR property hookup
+- Table get/set
+  - RANDR properties for tables
+- Vendor-specific properties
+  - HP DreamColor (ookala-mcf on sourceforget)
+  - ddccontrol-db
+
+Written:
+Timing report means we can verify modeset success
+DPMS state could be read for testing
