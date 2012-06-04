@@ -29,6 +29,7 @@
 #include <linux/export.h>
 #include "drmP.h"
 #include "drm_ddcci.h"
+#include "drm_vcp.h"
 
 /*
  * Some notes on the protocol, since the docs are... special:
@@ -126,6 +127,57 @@ ddcci_write_read(struct i2c_adapter *i2c, u8 *wbuf, int wlen,
 		return false;
 
 	return true;
+}
+
+struct ddcci_feature {
+	u8 opcode;
+	u8 type;
+	u16 max_value;
+	u16 current_value;
+};
+
+static bool
+ddcci_get_vcp_feature(struct i2c_adapter *i2c, u8 opcode,
+		      struct ddcci_feature *ret)
+{
+	u8 wbuf[5];
+	u8 rbuf[12];
+
+	wbuf[0] = 0x51;
+	wbuf[1] = 0x82;
+	wbuf[2] = CI_FEATURE_REQ;
+	wbuf[3] = opcode;
+	checksum(wbuf);
+
+	if (!ddcci_write_read(i2c, wbuf, ARRAY_SIZE(wbuf),
+			      rbuf, ARRAY_SIZE(rbuf), 40))
+		return false;
+
+	if (rbuf[3] != 0) /* unsupported VCP code */
+		return false;
+
+	ret->opcode = rbuf[4];
+	ret->type = rbuf[5];
+	ret->max_value = (rbuf[6] << 8) + rbuf[7];
+	ret->current_value = (rbuf[8] << 8) + rbuf[9];
+
+	return ret;
+}
+
+static bool
+ddcci_set_vcp_feature(struct i2c_adapter *i2c, u8 opcode, u16 val)
+{
+	u8 wbuf[7];
+
+	wbuf[0] = 0x51;
+	wbuf[1] = 0x84;
+	wbuf[2] = CI_SET_FEATURE_REQ;
+	wbuf[3] = opcode;
+	wbuf[4] = (val & 0xff00) >> 8;
+	wbuf[5] = val & 0xff;
+	checksum(wbuf);
+
+	return ddcci_write_read(i2c, wbuf, ARRAY_SIZE(wbuf), NULL, 0, 50);
 }
 
 /**
@@ -341,3 +393,41 @@ ddcci_get_sync_state(struct ddcci_context *ctx, struct drm_display_mode *mode)
 	return ddcci_sync_state_synced;
 }
 EXPORT_SYMBOL(ddcci_get_sync_state);
+
+/**
+ * Get DDC/CI's notion of sink power
+ *
+ * @ctx: DDC/CI context
+ *
+ * Looks at the VCP for power state.  1-4 are DPMS on/standy/suspend/off,
+ * but 0 and 5 (depending on sink) are used for "physically powered off".
+ * Usually the driver wants to treat that as if it were disconnected.
+ */
+enum drm_connector_status
+ddcci_get_sink_power(struct ddcci_context *ctx)
+{
+	struct ddcci_feature dpms;
+
+#if 0
+	/*
+	 * TODO: once we fill in ->vcp, we should be sure to mask off
+	 * VCP_POWER for displays where we don't get an HPD when the power
+	 * button is pushed.  Otherwise we'd have to poll to get state
+	 * changes right, and nobody likes polling.
+	 */
+	if (ctx->vcp[VCP_POWER] == 0)
+		return connector_status_unknown;
+#endif
+
+	if (!ddcci_get_vcp_feature(ctx->i2c, VCP_POWER, &dpms))
+		return connector_status_unknown;
+
+	switch (dpms.current_value) {
+	case 0:
+	case 5:
+		return connector_status_disconnected;
+	default:
+		return connector_status_connected;
+	}
+}
+EXPORT_SYMBOL(ddcci_get_sink_power);

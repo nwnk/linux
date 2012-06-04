@@ -40,5 +40,6 @@ extern struct ddcci_context *ddcci_probe(struct drm_device *dev,
 					 struct edid *edid);
 extern enum ddcci_sync_state ddcci_get_sync_state(struct ddcci_context *,
 						  struct drm_display_mode *);
+extern enum drm_connector_status ddcci_get_sink_power(struct ddcci_context *);
 
 #endif
