@@ -185,6 +185,59 @@ ddcci_get_vcp_capabilities(struct i2c_adapter *i2c)
 	return ret;
 }
 
+static bool
+ddcci_application_reports(struct i2c_adapter *i2c, bool on)
+{
+	u8 wbuf[5];
+
+	wbuf[0] = 0x51;
+	wbuf[1] = 0x81;
+	wbuf[2] = CI_ENABLE_APP_REPORT;
+	wbuf[3] = on;
+	checksum(wbuf);
+
+	return ddcci_write_read(i2c, wbuf, ARRAY_SIZE(wbuf), NULL, 0, 50);
+}
+
+struct ddcci_timing_report {
+	u8 status;
+	u16 hsync;
+	u16 vsync;
+};
+
+/*
+ * Timing reports don't work until you turn application reports on.  You
+ * want not to leave application reports on, because on some monitors that
+ * will move DPMS control into DDC/CI, which leads to weird things like the
+ * power button on the display not working.
+ */
+static bool
+ddcci_get_timing_report(struct i2c_adapter *i2c,
+			struct ddcci_timing_report *ret)
+{
+	u8 wbuf[4];
+	u8 rbuf[32];
+
+	wbuf[0] = 0x51;
+	wbuf[1] = 0x81;
+	wbuf[2] = CI_TIMING_REQ;
+	checksum(wbuf);
+
+	if (!ddcci_application_reports(i2c, true))
+		return false;
+
+	if (!ddcci_write_read(i2c, wbuf, ARRAY_SIZE(wbuf),
+			      rbuf, ARRAY_SIZE(rbuf), 40))
+		return false;
+
+	ret->status = rbuf[3];
+	ret->hsync = (rbuf[4] << 8) + rbuf[5];
+	ret->vsync = (rbuf[6] << 8) + rbuf[7];
+
+	ddcci_application_reports(i2c, false);
+	return true;
+}
+
 /* High-level API */
 
 struct ddcci_context {
@@ -254,3 +307,37 @@ out:
 	return NULL;
 }
 EXPORT_SYMBOL(ddcci_probe);
+
+/**
+ * Verify sink sync
+ *
+ * @i2c: Associated i2c bus
+ * @mode: The mode we're attempting to set.
+ *
+ * Ask the monitor whether it has synced to what we're sending it.  @mode
+ * should be the adjusted mode, as opposed to the user mode.
+ *
+ * TODO: The 'mode' argument is not used. We're not checking the sync polarity
+ * bits, though we could.  At least on some DP monitors the sync bits are
+ * fictitious, since DP doesn't really have the same concept of sync
+ * signalling.  We're also not checking the reported frequencies, which are in
+ * odd units (hsync in tens of Hz, vsync in hundredths of Hz) that are more
+ * precise than what drm_mode_{hsync, vrefresh} will give us.
+ */
+enum ddcci_sync_state
+ddcci_get_sync_state(struct ddcci_context *ctx, struct drm_display_mode *mode)
+{
+	struct ddcci_timing_report report;
+
+	if (!ddcci_get_timing_report(ctx->i2c, &report))
+		return ddcci_sync_state_unknown;
+
+	if (!(report.status & 0x80))
+		return ddcci_sync_state_failed;
+
+	if (report.status & 0x40)
+		return ddcci_sync_state_unstable;
+
+	return ddcci_sync_state_synced;
+}
+EXPORT_SYMBOL(ddcci_get_sync_state);

@@ -23,12 +23,22 @@
 #ifndef DRM_DDCCI_H
 #define DRM_DDCCI_H
 
+#include "drm_crtc.h"
 #include "drm_edid.h"
 
 struct ddcci_context;
 
+enum ddcci_sync_state {
+	ddcci_sync_state_failed,
+	ddcci_sync_state_unknown,
+	ddcci_sync_state_unstable,
+	ddcci_sync_state_synced,
+};
+
 extern struct ddcci_context *ddcci_probe(struct drm_device *dev,
 					 struct i2c_adapter *i2c,
 					 struct edid *edid);
+extern enum ddcci_sync_state ddcci_get_sync_state(struct ddcci_context *,
+						  struct drm_display_mode *);
 
 #endif
